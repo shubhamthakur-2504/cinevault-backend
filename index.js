@@ -3,7 +3,9 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 
 import { CLIENT_URL, PORT } from './config/const.js';
+import { connectDB } from './config/db.js';
 
+await connectDB();
 
 const app = express();
 
