@@ -65,6 +65,119 @@ const searchMovies = asyncHandler(async (req, res, next) => {
     return res.status(200).json(new apiResponse(200, movies.length === 0 ? "No movies found" : "Movies fetched successfully", { movies }));
 })
 
+const editMovie = asyncHandler(async (req, res, next) => {
+    if (!req.user || req.user.role !== 'ADMIN') {
+        return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
+    }
+    const movieId = req.params.id;
+    const rawUpdateData = req.body;
 
+    if (!mongoose.Types.ObjectId.isValid(movieId)) {
+        return res.status(400).json(new apiError(400, "Invalid movie ID"));
+    }
+    if (rawUpdateData.title && rawUpdateData.title.trim() === "") {
+        return res.status(400).json(new apiError(400, "Title cannot be empty"));
+    }
+    if (rawUpdateData.rating && (isNaN(rawUpdateData.rating) || rawUpdateData.rating < 0 || rawUpdateData.rating > 10)) {
+        return res.status(400).json(new apiError(400, "Rating must be a number between 0 and 10"));
+    }
+    if (rawUpdateData.releaseDate && isNaN(Date.parse(rawUpdateData.releaseDate))) {
+        return res.status(400).json(new apiError(400, "Invalid release date"));
+    }
+    if (rawUpdateData.duration && (isNaN(rawUpdateData.duration) || rawUpdateData.duration <= 0)) {
+        return res.status(400).json(new apiError(400, "Duration must be a positive number"));
+    }
+
+    const updateData = {};
+    const allowedFields = ["title", "description", "posterUrl", "rating", "releaseDate", "duration", "genre"];
+
+    for (const field of allowedFields) {
+        if (rawUpdateData[field]) {
+            updateData[field] = rawUpdateData[field];
+        }
+    }
+
+    // implement cloudinary upload for posterUrl 
+    const updatedMovie = await Movie.findByIdAndUpdate(movieId, updateData, { new: true, runValidators: true }).select("-__v -updatedAt").lean();
+    if (!updatedMovie) {
+        return res.status(404).json(new apiError(404, "Movie not found"));
+    }
+    return res.status(200).json(new apiResponse(200, "Movie updated successfully", { movie: updatedMovie }));
+})
+
+const deleteMovie = asyncHandler(async (req, res, next) => {
+    if (!req.user || !req.user.role !== 'ADMIN') {
+        return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
+    }
+    const movieId = req.params.id;
+    if (!mongoose.Types.ObjectId.isValid(movieId)) {
+        return res.status(400).json(new apiError(400, "Invalid movie ID"));
+    }
+    // implement cloudinary delete
+    const deletedMovie = await Movie.findByIdAndDelete(movieId);
+    if (!deletedMovie) {
+        return res.status(404).json(new apiError(404, "Movie not found"));
+    }
+
+    return res.status(200).json(new apiResponse(200, "Movie deleted successfully"));
+})
+
+
+const createMovie = asyncHandler(async (req, res) => {
+    if (!req.user || req.user.role !== 'ADMIN') {
+        return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
+    }
+    let { title, description, posterUrl, rating, releaseDate, duration, genre } = req.body;
+
+    if (!title || !posterUrl || rating === undefined || !releaseDate || duration === undefined) {
+        return res.status(400).json(new apiError(400, "All required fields must be provided"));
+    }
+
+    title = title.trim();
+    description = description ? description.trim() : "";
+    posterUrl = posterUrl.trim();
+    rating = parseFloat(rating);
+    duration = parseInt(duration);
+    releaseDate = new Date(releaseDate);
+    
+    if (Array.isArray(genre)) {
+        genre = genre.map(g => String(g).trim()).filter(Boolean);
+    } else if (typeof genre === "string") {
+        genre = genre.split(",").map(g => g.trim()).filter(Boolean);
+    } else {
+        genre = [];
+    }
+
+    if (isNaN(rating) || rating < 0 || rating > 10) {
+        return res.status(400).json(new apiError(400, "Rating must be a number between 0 and 10"));
+    }
+    if (isNaN(duration) || duration <= 0) {
+        return res.status(400).json(new apiError(400, "Duration must be a positive number"));
+    }
+    if (isNaN(releaseDate.getTime())) {
+        return res.status(400).json(new apiError(400, "Invalid release date"));
+    }
+
+    // implement cloudinary upload for posterUrl
+
+    try {
+        const newMovie = new Movie({
+            title,
+            description,
+            posterUrl,
+            rating,
+            releaseDate,
+            duration,
+            genre,
+            createdBy: req.user._id
+        });
+        // need to implement lazy insertion
+        await newMovie.save();
+        return res.status(201).json(new apiResponse(201, "Movie created successfully", { movie: newMovie }));
+    } catch (error) {
+        return res.status(500).json(new apiError(500, "Internal Server Error"));
+    }
+
+})
 
 export { getAllMovies, getMoviesSorted, searchMovies };
