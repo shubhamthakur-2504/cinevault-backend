@@ -1,8 +1,10 @@
 import mongoose from "mongoose";
+import fs from "fs";
 import Movie from "../models/movie.model.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { apiError } from "../utils/apiError.js";
 import { apiResponse } from "../utils/apiResponse.js";
+import { uploadOnCloudinary, extractCloudinaryPublicId, deleteFromCloudinary } from "../utils/cloudinary.js";
 
 // get all movies with pagination
 const getAllMovies = asyncHandler(async (req, res, next) => {
@@ -69,8 +71,17 @@ const editMovie = asyncHandler(async (req, res, next) => {
     if (!req.user || req.user.role !== 'ADMIN') {
         return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
     }
+
     const movieId = req.params.id;
+
+    const oldMovie = await Movie.findById(movieId).lean();
+    if (!oldMovie) {
+        return res.status(404).json(new apiError(404, "Movie not found"));
+    }
+
     const rawUpdateData = req.body;
+    const localFilePath = req.file.path;
+    let flag = false;
 
     if (!mongoose.Types.ObjectId.isValid(movieId)) {
         return res.status(400).json(new apiError(400, "Invalid movie ID"));
@@ -89,7 +100,7 @@ const editMovie = asyncHandler(async (req, res, next) => {
     }
 
     const updateData = {};
-    const allowedFields = ["title", "description", "posterUrl", "rating", "releaseDate", "duration", "genre"];
+    const allowedFields = ["title", "description", "rating", "releaseDate", "duration", "genre"];
 
     for (const field of allowedFields) {
         if (rawUpdateData[field]) {
@@ -97,26 +108,66 @@ const editMovie = asyncHandler(async (req, res, next) => {
         }
     }
 
-    // implement cloudinary upload for posterUrl 
-    const updatedMovie = await Movie.findByIdAndUpdate(movieId, updateData, { new: true, runValidators: true }).select("-__v -updatedAt").lean();
-    if (!updatedMovie) {
-        return res.status(404).json(new apiError(404, "Movie not found"));
+    if (rawUpdateData.genre !== undefined) {
+        if (Array.isArray(rawUpdateData.genre)) {
+            updateData.genre = rawUpdateData.genre.map(g => g.trim());
+        } else if (typeof rawUpdateData.genre === "string") {
+            updateData.genre = rawUpdateData.genre.split(",").map(g => g.trim());
+        } else {
+            return res.status(400).json(new apiError(400, "Invalid genre format"));
+        }
     }
+    
+    if (localFilePath) {
+        try {
+            const uploadResult = await uploadOnCloudinary(localFilePath);
+            if (uploadResult && uploadResult.url) {
+                updateData.posterUrl = uploadResult.url;
+                flag = true;
+            } else {
+                fs.unlink(localFilePath);
+                return res.status(500).json(new apiError(500, "Failed to upload poster to Cloudinary"));
+            }
+        } catch (err) {
+            fs.unlink(localFilePath);
+            return res.status(500).json(new apiError(500, "Cloudinary upload error"));
+        }
+    }
+
+    const updatedMovie = await Movie.findByIdAndUpdate(movieId, updateData, { new: true, runValidators: true }).select("-__v -updatedAt").lean();
+
+    if (flag) {
+        try {
+            deleteFromCloudinary(oldMovie.posterUrl);
+            console.log("Deleted old poster from Cloudinary");
+        } catch (error) {
+            console.log("Error deleting old poster from Cloudinary:", error);
+        }
+    }
+
     return res.status(200).json(new apiResponse(200, "Movie updated successfully", { movie: updatedMovie }));
 })
 
 const deleteMovie = asyncHandler(async (req, res, next) => {
-    if (!req.user || !req.user.role !== 'ADMIN') {
+    if (!req.user || req.user.role !== 'ADMIN') {
         return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
     }
+
     const movieId = req.params.id;
     if (!mongoose.Types.ObjectId.isValid(movieId)) {
         return res.status(400).json(new apiError(400, "Invalid movie ID"));
     }
-    // implement cloudinary delete
+    
     const deletedMovie = await Movie.findByIdAndDelete(movieId);
     if (!deletedMovie) {
         return res.status(404).json(new apiError(404, "Movie not found"));
+    }
+
+    try {
+        deleteFromCloudinary(deletedMovie.posterUrl);
+        console.log("Deleted poster from Cloudinary");
+    } catch (error) {
+        confirm.log("Error deleting poster from Cloudinary:", error);
     }
 
     return res.status(200).json(new apiResponse(200, "Movie deleted successfully"));
@@ -127,18 +178,24 @@ const createMovie = asyncHandler(async (req, res) => {
     if (!req.user || req.user.role !== 'ADMIN') {
         return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
     }
-    let { title, description, posterUrl, rating, releaseDate, duration, genre } = req.body;
 
-    if (!title || !posterUrl || rating === undefined || !releaseDate || duration === undefined) {
+    let { title, description, posterUrl, rating, releaseDate, duration, genre } = req.body;
+    let localFilePath = req.file ? req.file.path : null;
+    if (!title || rating === undefined || !releaseDate || duration === undefined) {
         return res.status(400).json(new apiError(400, "All required fields must be provided"));
+    }
+    if (!posterUrl && !localFilePath) {
+        return res.status(400).json(new apiError(400, "Poster must be provided"));
     }
 
     title = title.trim();
     description = description ? description.trim() : "";
-    posterUrl = posterUrl.trim();
     rating = parseFloat(rating);
     duration = parseInt(duration);
     releaseDate = new Date(releaseDate);
+    if (posterUrl) {
+        posterUrl = posterUrl.trim();
+    }
     
     if (Array.isArray(genre)) {
         genre = genre.map(g => String(g).trim()).filter(Boolean);
@@ -158,7 +215,20 @@ const createMovie = asyncHandler(async (req, res) => {
         return res.status(400).json(new apiError(400, "Invalid release date"));
     }
 
-    // implement cloudinary upload for posterUrl
+    if (localFilePath) {
+        try {
+            const uploadResult = await uploadOnCloudinary(localFilePath);
+            if (uploadResult && uploadResult.url) {
+                posterUrl = uploadResult.url;
+            } else {
+                fs.unlink(localFilePath);
+                return res.status(500).json(new apiError(500, "Failed to upload poster to Cloudinary"));
+            }
+        } catch (err) {
+            fs.unlink(localFilePath);
+            return res.status(500).json(new apiError(500, "Cloudinary upload error"));
+        }
+    }
 
     try {
         const newMovie = new Movie({
@@ -180,4 +250,4 @@ const createMovie = asyncHandler(async (req, res) => {
 
 })
 
-export { getAllMovies, getMoviesSorted, searchMovies };
+export { getAllMovies, getMoviesSorted, searchMovies, editMovie, deleteMovie };
