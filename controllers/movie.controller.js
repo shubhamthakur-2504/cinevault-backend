@@ -4,7 +4,8 @@ import Movie from "../models/movie.model.js";
 import asyncHandler from "../utils/asyncHandler.js";
 import { apiError } from "../utils/apiError.js";
 import { apiResponse } from "../utils/apiResponse.js";
-import { uploadOnCloudinary, extractCloudinaryPublicId, deleteFromCloudinary } from "../utils/cloudinary.js";
+import { uploadOnCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
+import { movieInsertQueue } from "../queue/movie.queue.js";
 
 // get all movies with pagination
 const getAllMovies = asyncHandler(async (req, res, next) => {
@@ -53,6 +54,7 @@ const getMoviesSorted = asyncHandler(async (req, res, next) => {
     }
 })
 
+// search movies
 const searchMovies = asyncHandler(async (req, res, next) => {
     const searchTerm = (req.query.q || "").trim();
     if (!searchTerm) {
@@ -67,6 +69,7 @@ const searchMovies = asyncHandler(async (req, res, next) => {
     return res.status(200).json(new apiResponse(200, movies.length === 0 ? "No movies found" : "Movies fetched successfully", { movies }));
 })
 
+// edit movie by admin only
 const editMovie = asyncHandler(async (req, res, next) => {
     if (!req.user || req.user.role !== 'ADMIN') {
         return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
@@ -148,6 +151,7 @@ const editMovie = asyncHandler(async (req, res, next) => {
     return res.status(200).json(new apiResponse(200, "Movie updated successfully", { movie: updatedMovie }));
 })
 
+// delete movie by admin only
 const deleteMovie = asyncHandler(async (req, res, next) => {
     if (!req.user || req.user.role !== 'ADMIN') {
         return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
@@ -173,7 +177,7 @@ const deleteMovie = asyncHandler(async (req, res, next) => {
     return res.status(200).json(new apiResponse(200, "Movie deleted successfully"));
 })
 
-
+// create movie by admin only
 const createMovie = asyncHandler(async (req, res) => {
     if (!req.user || req.user.role !== 'ADMIN') {
         return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
@@ -196,7 +200,7 @@ const createMovie = asyncHandler(async (req, res) => {
     if (posterUrl) {
         posterUrl = posterUrl.trim();
     }
-    
+
     if (Array.isArray(genre)) {
         genre = genre.map(g => String(g).trim()).filter(Boolean);
     } else if (typeof genre === "string") {
@@ -231,7 +235,7 @@ const createMovie = asyncHandler(async (req, res) => {
     }
 
     try {
-        const newMovie = new Movie({
+        const movieData ={
             title,
             description,
             posterUrl,
@@ -240,14 +244,15 @@ const createMovie = asyncHandler(async (req, res) => {
             duration,
             genre,
             createdBy: req.user._id
-        });
-        // need to implement lazy insertion
-        await newMovie.save();
-        return res.status(201).json(new apiResponse(201, "Movie created successfully", { movie: newMovie }));
+        };
+        
+        await movieInsertQueue.add("insert-movie", movieData)
+
+        return res.status(202).json(new apiResponse(202, "Movie added to queue successfully"));
     } catch (error) {
         return res.status(500).json(new apiError(500, "Internal Server Error"));
     }
 
 })
 
-export { getAllMovies, getMoviesSorted, searchMovies, editMovie, deleteMovie };
+export { getAllMovies, getMoviesSorted, searchMovies, editMovie, deleteMovie, createMovie };
