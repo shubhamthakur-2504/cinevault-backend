@@ -1,9 +1,8 @@
 import IORedis from "ioredis";
-import { UPSTASH_REDIS_URL, UPSTASH_REDIS_TOKEN } from "./const.js";
+import { UPSTASH_TCP_REDIS_URL } from "./const.js";
 
-export const redisConnection = new IORedis(
-    UPSTASH_REDIS_URL,{
-        password: UPSTASH_REDIS_TOKEN,
-        tls: {}
-    }
-);
+export const redisConnection = new IORedis(UPSTASH_TCP_REDIS_URL,{
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    enableOfflineQueue: false
+});

@@ -1,6 +1,10 @@
 import { Worker } from "bullmq";
 import { redisConnection } from "../config/redis.js";
 import Movie from "../models/movie.model.js";
+import { connectDB } from "../config/db.js";
+
+// Connect to MongoDB
+await connectDB();
 
 // BACKGROUND WORKER
 export const movieInsertWorker = new Worker(
