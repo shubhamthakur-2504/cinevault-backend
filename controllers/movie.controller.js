@@ -71,84 +71,93 @@ const searchMovies = asyncHandler(async (req, res, next) => {
 
 // edit movie by admin only
 const editMovie = asyncHandler(async (req, res, next) => {
-    if (!req.user || req.user.role !== 'ADMIN') {
-        return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
-    }
-
     const movieId = req.params.id;
-
-    const oldMovie = await Movie.findById(movieId).lean();
-    if (!oldMovie) {
-        return res.status(404).json(new apiError(404, "Movie not found"));
-    }
-
     const rawUpdateData = req.body;
     const localFilePath = req.file.path;
     let flag = false;
-
-    if (!mongoose.Types.ObjectId.isValid(movieId)) {
-        return res.status(400).json(new apiError(400, "Invalid movie ID"));
-    }
-    if (rawUpdateData.title && rawUpdateData.title.trim() === "") {
-        return res.status(400).json(new apiError(400, "Title cannot be empty"));
-    }
-    if (rawUpdateData.rating && (isNaN(rawUpdateData.rating) || rawUpdateData.rating < 0 || rawUpdateData.rating > 10)) {
-        return res.status(400).json(new apiError(400, "Rating must be a number between 0 and 10"));
-    }
-    if (rawUpdateData.releaseDate && isNaN(Date.parse(rawUpdateData.releaseDate))) {
-        return res.status(400).json(new apiError(400, "Invalid release date"));
-    }
-    if (rawUpdateData.duration && (isNaN(rawUpdateData.duration) || rawUpdateData.duration <= 0)) {
-        return res.status(400).json(new apiError(400, "Duration must be a positive number"));
-    }
-
-    const updateData = {};
-    const allowedFields = ["title", "description", "rating", "releaseDate", "duration", "genre"];
-
-    for (const field of allowedFields) {
-        if (rawUpdateData[field]) {
-            updateData[field] = rawUpdateData[field];
+    let uploadResult = null;
+    try {
+        if (!req.user || req.user.role !== 'ADMIN') {
+            return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
         }
-    }
-
-    if (rawUpdateData.genre !== undefined) {
-        if (Array.isArray(rawUpdateData.genre)) {
-            updateData.genre = rawUpdateData.genre.map(g => g.trim());
-        } else if (typeof rawUpdateData.genre === "string") {
-            updateData.genre = rawUpdateData.genre.split(",").map(g => g.trim());
-        } else {
-            return res.status(400).json(new apiError(400, "Invalid genre format"));
-        }
-    }
     
-    if (localFilePath) {
-        try {
-            const uploadResult = await uploadOnCloudinary(localFilePath);
-            if (uploadResult && uploadResult.url) {
-                updateData.posterUrl = uploadResult.url;
-                flag = true;
-            } else {
-                fs.unlink(localFilePath);
-                return res.status(500).json(new apiError(500, "Failed to upload poster to Cloudinary"));
+        const oldMovie = await Movie.findById(movieId).lean();
+        if (!oldMovie) {
+            return res.status(404).json(new apiError(404, "Movie not found"));
+        }
+    
+        if (!mongoose.Types.ObjectId.isValid(movieId)) {
+            return res.status(400).json(new apiError(400, "Invalid movie ID"));
+        }
+        if (rawUpdateData.title && rawUpdateData.title.trim() === "") {
+            return res.status(400).json(new apiError(400, "Title cannot be empty"));
+        }
+        if (rawUpdateData.rating && (isNaN(rawUpdateData.rating) || rawUpdateData.rating < 0 || rawUpdateData.rating > 10)) {
+            return res.status(400).json(new apiError(400, "Rating must be a number between 0 and 10"));
+        }
+        if (rawUpdateData.releaseDate && isNaN(Date.parse(rawUpdateData.releaseDate))) {
+            return res.status(400).json(new apiError(400, "Invalid release date"));
+        }
+        if (rawUpdateData.duration && (isNaN(rawUpdateData.duration) || rawUpdateData.duration <= 0)) {
+            return res.status(400).json(new apiError(400, "Duration must be a positive number"));
+        }
+    
+        const updateData = {};
+        const allowedFields = ["title", "description", "rating", "releaseDate", "duration", "genre"];
+    
+        for (const field of allowedFields) {
+            if (rawUpdateData[field]) {
+                updateData[field] = rawUpdateData[field];
             }
-        } catch (err) {
+        }
+    
+        if (rawUpdateData.genre !== undefined) {
+            if (Array.isArray(rawUpdateData.genre)) {
+                updateData.genre = rawUpdateData.genre.map(g => g.trim());
+            } else if (typeof rawUpdateData.genre === "string") {
+                updateData.genre = rawUpdateData.genre.split(",").map(g => g.trim());
+            } else {
+                return res.status(400).json(new apiError(400, "Invalid genre format"));
+            }
+        }
+        
+        if (localFilePath) {
+            try {
+                uploadResult = await uploadOnCloudinary(localFilePath);
+                if (uploadResult && uploadResult.url) {
+                    updateData.posterUrl = uploadResult.url;
+                    flag = true;
+                } else {
+                    fs.unlink(localFilePath);
+                    return res.status(500).json(new apiError(500, "Failed to upload poster to Cloudinary"));
+                }
+            } catch (err) {
+                fs.unlink(localFilePath);
+                return res.status(500).json(new apiError(500, "Cloudinary upload error"));
+            }
+        }
+    
+        const updatedMovie = await Movie.findByIdAndUpdate(movieId, updateData, { new: true, runValidators: true }).select("-__v -updatedAt").lean();
+    
+        if (flag) {
+            try {
+                deleteFromCloudinary(oldMovie.posterUrl);
+                console.log("Deleted old poster from Cloudinary");
+            } catch (error) {
+                console.log("Error deleting old poster from Cloudinary:", error);
+            }
+        }
+    
+        return res.status(200).json(new apiResponse(200, "Movie updated successfully", { movie: updatedMovie }));
+    } catch (error) {
+        if (localFilePath) {
             fs.unlink(localFilePath);
-            return res.status(500).json(new apiError(500, "Cloudinary upload error"));
         }
-    }
-
-    const updatedMovie = await Movie.findByIdAndUpdate(movieId, updateData, { new: true, runValidators: true }).select("-__v -updatedAt").lean();
-
-    if (flag) {
-        try {
-            deleteFromCloudinary(oldMovie.posterUrl);
-            console.log("Deleted old poster from Cloudinary");
-        } catch (error) {
-            console.log("Error deleting old poster from Cloudinary:", error);
+        if (flag && uploadResult) {
+            deleteFromCloudinary(uploadResult.url);
         }
+        return res.status(500).json(new apiError(500, "Internal Server Error"));
     }
-
-    return res.status(200).json(new apiResponse(200, "Movie updated successfully", { movie: updatedMovie }));
 })
 
 // delete movie by admin only
@@ -250,6 +259,12 @@ const createMovie = asyncHandler(async (req, res) => {
 
         return res.status(202).json(new apiResponse(202, "Movie added to queue successfully"));
     } catch (error) {
+        if (localFilePath) {
+            fs.unlink(localFilePath);
+        }
+        if (posterUrl) {
+            deleteFromCloudinary(posterUrl);
+        }
         return res.status(500).json(new apiError(500, "Internal Server Error"));
     }
 

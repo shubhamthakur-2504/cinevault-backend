@@ -31,6 +31,14 @@ app.use("/api/movies", movieRoutes);
 // error handler
 app.use((err, req, res, next) => {
     const statusCode = err.statusCode || 500;
+    if(req.file){
+        // delete the uploaded file in case of any error
+        fs.unlink(req.file?.path, (unlinkErr) => {
+            if (unlinkErr) {
+                console.error("Error deleting local file:", unlinkErr);
+            }
+        });
+    }
     res.status(statusCode).json({
         success: false,
         statusCode,
