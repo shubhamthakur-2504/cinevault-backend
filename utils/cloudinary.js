@@ -85,8 +85,12 @@ const deleteFromCloudinary = async function (filePath, fileType = 'image') {
             console.log("File not found");
             return null
         }
-        const publicId = extractCloudinaryPublicId(filePath);
 
+        const publicId = extractCloudinaryPublicId(filePath);
+        if (!publicId) {
+            return null
+        }
+        
         const deleteResponse = await cloudinary.uploader.destroy(publicId, {
             resource_type: fileType
         });

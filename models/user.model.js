@@ -1,5 +1,5 @@
 import mongoose, { Schema } from "mongoose";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { JWT_REFRESH_SECRET, JWT_ACCESS_SECRET, JWT_REFRESH_EXPIRY, JWT_ACCESS_EXPIRY } from "../config/const.js";
 
@@ -35,11 +35,10 @@ const userSchema = new Schema({
     }
 }, { timestamps: true })
 
-userSchema.pre('save', async function(next) {
-    if (!this.isModified('passwordHash')) return next();
+userSchema.pre('save', async function() {
+    if (!this.isModified('passwordHash')) return;
     const salt = await bcrypt.genSalt(10);
     this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
-    next();
 });
 
 userSchema.methods.comparePassword = async function(password) {

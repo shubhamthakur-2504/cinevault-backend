@@ -1,4 +1,4 @@
-import { HTTP_COOKIE_EXPIRES_IN } from "../config/const";
+import { HTTP_COOKIE_EXPIRES_IN } from "../config/const.js";
 
 const validateEmail = (email) => {
     const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
