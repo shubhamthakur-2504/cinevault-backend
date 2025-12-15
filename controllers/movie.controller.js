@@ -13,14 +13,16 @@ const getAllMovies = asyncHandler(async (req, res, next) => {
     let cursor = null;
     if (req.query.cursor) {
         try {
-            cursor = mongoose.Types.ObjectId(req.query.cursor);
+            if(mongoose.isValidObjectId(req.query.cursor)){
+                cursor = req.query.cursor;
+            }
         } catch (e) {
             cursor = null;
         }
     }
     const query = cursor ? { _id: { $lt: cursor } } : {};
 
-    const movies = await Movie.find(query).sort({ createdAt: -1 }).limit(limit + 1).select("-__v -updatedAt").lean();
+    const movies = await Movie.find(query).sort({ _id: -1 }).limit(limit + 1).select("-__v -updatedAt").lean();
     const hasNextPage = movies.length > limit;
     const nextCursor = hasNextPage ? movies[movies.length - 1]._id : null;
     if (hasNextPage) {
@@ -61,10 +63,36 @@ const searchMovies = asyncHandler(async (req, res, next) => {
         return res.status(400).json(new apiError(400, "Search term is required"));
     }
 
-    const movies = await Movie.find(
-        { $text: { $search: searchTerm } },
-        { score: { $meta: "textScore" } }
-    ).sort({ score: { $meta: "textScore" } }).select("-__v -updatedAt").lean();
+    const movies = await Movie.aggregate([
+        { $match: { $text: { $search: searchTerm } } },
+        { $addFields: { score: { $meta: "textScore" } } },
+
+        {
+            $group: {
+                _id: null,
+                maxScore: { $max: "$score" },
+                docs: { $push: "$$ROOT" }
+            }
+        },
+
+        // Keep only strong matches (>= 45% of best)
+        { $unwind: "$docs" },
+        {
+            $match: {
+                $expr: {
+                    $gte: [
+                        "$docs.score",
+                        { $multiply: ["$maxScore", 0.45] }
+                    ]
+                }
+            }
+        },
+
+        { $replaceRoot: { newRoot: "$docs" } },
+        { $sort: { score: -1 } },
+        { $project: { __v: 0, updatedAt: 0 } }
+    ]);
+
 
     return res.status(200).json(new apiResponse(200, movies.length === 0 ? "No movies found" : "Movies fetched successfully", { movies }));
 })
@@ -79,6 +107,12 @@ const editMovie = asyncHandler(async (req, res, next) => {
     try {
         if (!req.user || req.user.role !== 'ADMIN') {
             return res.status(403).json(new apiError(403, "Forbidden: Admins only"));
+        }
+        if (!movieId) {
+            return res.status(400).json(new apiError(400, "Movie ID is required"));
+        }
+        if(!mongoose.isValidObjectId(movieId)){
+            return res.status(400).json(new apiError(400, "Invalid movie ID"));
         }
     
         const oldMovie = await Movie.findById(movieId).lean();
@@ -167,7 +201,7 @@ const deleteMovie = asyncHandler(async (req, res, next) => {
     }
 
     const movieId = req.params.id;
-    if (!mongoose.Types.ObjectId.isValid(movieId)) {
+    if (!mongoose.isValidObjectId(movieId)) {
         return res.status(400).json(new apiError(400, "Invalid movie ID"));
     }
     
